@@ -53,6 +53,7 @@ class MessageRead(BaseModel):
     household_id: int
     plug_id: int | None
     kind: str
+    severity: str
     title: str
     body: str
     created_at: datetime

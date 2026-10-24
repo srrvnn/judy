@@ -148,6 +148,7 @@ def test_mock_message_is_sent_first_without_an_id():
     assert "id:" not in mock_chunk  # must not become the browser's Last-Event-ID
     data = json.loads(mock_chunk.split("data: ", 1)[1])
     assert data["mock"] is True and data["actions"][0]["label"] == "Turn off"
+    assert data["severity"] == "critical"
     assert parse(real_chunk)["id"] == 5
 
 

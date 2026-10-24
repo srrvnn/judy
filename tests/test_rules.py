@@ -36,6 +36,7 @@ def test_power_after_off_sends_a_message_without_calling_claude(session, stub_cl
     assert len(created) == 1
     message = session.exec(select(Message)).one()
     assert message.kind == "power_after_off" and message.plug_id == plug.id
+    assert message.severity == "critical"
     assert "Heater" in message.title and "42W" in message.body
     actions = session.exec(select(Action).order_by(Action.id)).all()
     assert [a.type for a in actions] == ["turn_off", "dismiss"]
@@ -61,6 +62,7 @@ def test_time_change_flags_plug_that_has_been_on_a_long_time(session):
     session.commit()
     created = run(session, Trigger(kind="time_changed", detail="x"))
     assert [m.kind for m in created] == ["left_on"]
+    assert created[0].severity == "critical"
     assert "5h" in created[0].title
 
 

@@ -23,6 +23,7 @@ MODEL = "claude-opus-5-5"
 USE_CLAUDE = os.environ.get("JUDY_USE_CLAUDE", "0") == "1"
 LEFT_ON_MINUTES = int(os.environ.get("LEFT_ON_MINUTES", "120"))
 ACTION_TYPES = ["turn_off", "turn_on", "dismiss"]
+SEVERITIES = ["critical", "info"]
 DRAWING_THRESHOLD_W = 1.0
 
 SYSTEM_PROMPT = """\
@@ -37,6 +38,9 @@ Decide whether the household needs to hear about anything right now. If so, writ
 one or more short, friendly messages, each with the actions the user could take \
 (for example turning a plug off, or dismissing). Use the plug names and rooms. \
 Reason about time: what is normal at this hour, and how long something has been on.
+
+Set severity to "critical" when something is off and the household must act, and to \
+"info" when something was off but has already been taken care of.
 
 Be sparing. If nothing is worth interrupting the household for, return no messages. \
 Do not repeat a message already sent recently (see recent_messages) unless the \
@@ -55,6 +59,8 @@ DECISION_SCHEMA = {
                 "properties": {
                     "plug_id": {"type": ["integer", "null"]},
                     "kind": {"type": "string", "description": "short snake_case category, e.g. left_on, high_usage"},
+                    "severity": {"type": "string", "enum": SEVERITIES,
+                                 "description": "critical: something is off and the household must act; info: something was off and is already taken care of"},
                     "title": {"type": "string"},
                     "body": {"type": "string"},
                     "actions": {
@@ -72,7 +78,7 @@ DECISION_SCHEMA = {
                         },
                     },
                 },
-                "required": ["plug_id", "kind", "title", "body", "actions"],
+                "required": ["plug_id", "kind", "severity", "title", "body", "actions"],
                 "additionalProperties": False,
             },
         },
@@ -176,6 +182,7 @@ def rule_based_decision(context: dict) -> dict:
         messages.append({
             "plug_id": plug_id,
             "kind": "power_after_off",
+            "severity": "critical",
             "title": f"{label} just started drawing power",
             "body": f"{label} was off and is now drawing {power:.0f}W.",
             "actions": [
@@ -195,7 +202,8 @@ def rule_based_decision(context: dict) -> dict:
             messages.append({
                 "plug_id": plug["id"],
                 "kind": "left_on",
-                    "title": f"{label} has been on for {hours:.0f}h",
+                "severity": "critical",
+                "title": f"{label} has been on for {hours:.0f}h",
                 "body": f"{label} has been drawing power for about {hours:.1f} hours.",
                 "actions": [
                     {"label": "Turn off", "description": f"Switch {label} off", "type": "turn_off", "plug_id": plug["id"]},
@@ -224,6 +232,7 @@ def _save_messages(session: Session, decision: dict) -> list[Message]:
             household_id=household_id,
             plug_id=plug.id if plug else None,
             kind=item["kind"],
+            severity=item.get("severity") if item.get("severity") in SEVERITIES else "info",
             title=item["title"],
             body=item["body"],
         )

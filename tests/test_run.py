@@ -85,3 +85,17 @@ def test_run_includes_recent_messages_in_context(session, stub_claude):
     session.commit()
     run(session, Trigger(kind="time_changed", detail="x"))
     assert stub_claude.calls[0]["recent_messages"][0]["title"] == "Heater left on"
+
+
+def test_severity_is_saved_and_defaults_to_info(session, stub_claude):
+    plug = make_plug(session)
+    base = {"plug_id": plug.id, "kind": "k", "title": "t", "body": "b", "actions": []}
+    stub_claude.decision["messages"] = [
+        {**base, "severity": "critical"},
+        {**base, "severity": "info"},
+        {**base, "severity": "bogus"},
+        base,
+    ]
+    run(session, Trigger(kind="time_changed", detail="x"))
+    severities = [m.severity for m in session.exec(select(Message).order_by(Message.id)).all()]
+    assert severities == ["critical", "info", "info", "info"]

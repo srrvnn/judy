@@ -60,6 +60,7 @@ class Message(SQLModel, table=True):
     household_id: int = Field(foreign_key="households.id", index=True)
     plug_id: int | None = Field(default=None, foreign_key="plugs.id")
     kind: str = Field(index=True, description="e.g. high_usage, left_on")
+    severity: str = Field(default="info", description="critical = needs action; info = already taken care of")
     title: str
     body: str
     created_at: datetime = Field(default_factory=utcnow)

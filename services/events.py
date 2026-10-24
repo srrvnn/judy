@@ -28,6 +28,7 @@ def mock_message() -> dict:
         "household_id": 0,
         "plug_id": None,
         "kind": "mock",
+        "severity": "critical",
         "title": "Mock: heater left on",
         "body": "This is a mock message sent when you connected. The heater has been on for 4 hours.",
         "created_at": now().isoformat(),
