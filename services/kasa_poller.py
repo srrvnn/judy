@@ -1,11 +1,15 @@
 import asyncio
+import logging
 import os
 
 from kasa import Device, DeviceType, Discover, Module
 from sqlmodel import Session
 
 from db.session import engine
+from services.heuristics import PowerAfterOffDetector, log_triggers
 from services.store import save_plugs
+
+logger = logging.getLogger("judy.kasa")
 
 PLUG_TYPES = {DeviceType.Plug, DeviceType.Strip, DeviceType.StripSocket}
 POLL_INTERVAL_SECONDS = int(os.environ.get("KASA_POLL_INTERVAL", "5"))
@@ -18,7 +22,7 @@ async def discover_plugs() -> list[Device]:
         try:
             await device.update()
         except Exception as exc:
-            print(f"[kasa] could not update {device.host}: {exc!r}", flush=True)
+            logger.warning("could not update %s: %r", device.host, exc)
     plugs = [d for d in found.values() if d.device_type in PLUG_TYPES]
     for device in found.values():
         await device.disconnect()
@@ -48,15 +52,17 @@ def _save(plugs: list[Device]) -> None:
 
 
 async def poll_forever(interval: float = POLL_INTERVAL_SECONDS) -> None:
+    power_after_off = PowerAfterOffDetector()
     while True:
         try:
             plugs = await discover_plugs()
             await asyncio.to_thread(_save, plugs)
             for p in plugs:
                 state = "on" if p.is_on else "off"
-                print(f"INFO: [kasa] {p.alias or 'no name'} ({p.model}) @ {p.host} - {state}{describe_energy(p)}", flush=True)
+                logger.info("%s (%s) @ %s - %s%s", p.alias or "no name", p.model, p.host, state, describe_energy(p))
+            log_triggers(power_after_off.check(plugs))
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            print(f"[kasa] discovery failed: {exc!r}", flush=True)
+            logger.error("discovery failed: %r", exc)
         await asyncio.sleep(interval)

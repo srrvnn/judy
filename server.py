@@ -1,10 +1,17 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
+from uvicorn.logging import DefaultFormatter
 
 from api.plugs import router as plugs_router
 from services.kasa_poller import poll_forever
+
+# uvicorn only configures its own loggers; reuse its colored formatter for ours
+_handler = logging.StreamHandler()
+_handler.setFormatter(DefaultFormatter(fmt="%(levelprefix)s %(message)s"))
+logging.basicConfig(level=logging.INFO, handlers=[_handler])
 
 # --- LIFESPAN AND APP SETUP ---
 
