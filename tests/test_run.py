@@ -47,7 +47,7 @@ def test_run_saves_messages_and_actions(session, stub_claude):
             {"label": "Dismiss", "description": "Ignore this", "type": "dismiss", "plug_id": None},
         ],
     }]
-    created = run(session, Trigger(kind="power_after_off", detail="heater drawing power", device_id="abc"))
+    created = run(session, Trigger(kind="time_changed", detail="the clock was moved to 16:00"))
     assert len(created) == 1
     message = session.exec(select(Message)).one()
     assert message.household_id == plug.household_id and message.plug_id == plug.id

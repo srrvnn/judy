@@ -1,13 +1,17 @@
 """judy.run: decide what to do about a trigger.
 
-Heuristics (e.g. power drawn after being off) and the control panel's clock
-changes both end up here. For now decisions are rule-based; set JUDY_USE_CLAUDE=1
-to hand Claude the trigger plus the household's current picture instead and let
-it decide whether to send messages with suggested actions.
+The hourly clock check and the control panel's clock changes both end up here. We hand
+Claude the trigger plus the household's current picture (judy/prompt.md holds its
+instructions) and it decides whether to send messages with suggested actions. Claude may
+also mark an action `automatic`: the server runs it at once, but only to turn back on a
+plug that Judy itself switched off. If Claude can't be reached, nothing is sent.
+JUDY_USE_CLAUDE=0 skips Claude.
 """
 import json
 import logging
 import os
+from datetime import timedelta, timezone
+from pathlib import Path
 
 import anthropic
 from sqlmodel import Session, select
@@ -16,37 +20,20 @@ from judy.trigger import Trigger
 from models import Action, Household, Message, Plug, Reading
 from services.clock import now
 from services.events import broadcaster, message_payload
+from services.messages import resolve_message
+from services.plug_control import PlugControlError, PlugController, controller as default_controller
 
 logger = logging.getLogger("judy.run")
 
 MODEL = "claude-opus-5-5"
-USE_CLAUDE = os.environ.get("JUDY_USE_CLAUDE", "0") == "1"
-LEFT_ON_MINUTES = int(os.environ.get("LEFT_ON_MINUTES", "120"))
+USE_CLAUDE = os.environ.get("JUDY_USE_CLAUDE", "1") != "0"
 ACTION_TYPES = ["turn_off", "turn_on", "dismiss"]
 SEVERITIES = ["critical", "info"]
 DRAWING_THRESHOLD_W = 1.0
+RESTORE_WINDOW = timedelta(hours=24)  # how far back a Judy turn-off is still eligible to be undone
 
-SYSTEM_PROMPT = """\
-You are Judy, an assistant that helps households be judicious with power.
-
-You are woken up when something happens: a heuristic fired on a smart plug (for \
-example a plug drawing power after being off), or the clock was moved so time \
-has changed. You are given the trigger, the current time, and the state of the \
-household's plugs, including how long each has been drawing power.
-
-Decide whether the household needs to hear about anything right now. If so, write \
-one or more short, friendly messages, each with the actions the user could take \
-(for example turning a plug off, or dismissing). Use the plug names and rooms. \
-Reason about time: what is normal at this hour, and how long something has been on.
-
-Set severity to "critical" when something is off and the household must act, and to \
-"info" when something was off but has already been taken care of.
-
-Be sparing. If nothing is worth interrupting the household for, return no messages. \
-Do not repeat a message already sent recently (see recent_messages) unless the \
-situation has clearly changed. Only reference plug ids that appear in the context. \
-Always include a dismiss action alongside any other action.
-"""
+PROMPT_PATH = Path(__file__).with_name("prompt.md")
+SYSTEM_PROMPT = PROMPT_PATH.read_text()
 
 DECISION_SCHEMA = {
     "type": "object",
@@ -72,8 +59,10 @@ DECISION_SCHEMA = {
                                 "description": {"type": "string", "description": "One sentence on what this does and why"},
                                 "type": {"type": "string", "enum": ACTION_TYPES},
                                 "plug_id": {"type": ["integer", "null"]},
+                                "automatic": {"type": "boolean",
+                                              "description": "true: run this action right now without asking. Only allowed for turn_on of a plug listed in switched_off_by_judy."},
                             },
-                            "required": ["label", "description", "type", "plug_id"],
+                            "required": ["label", "description", "type", "plug_id", "automatic"],
                             "additionalProperties": False,
                         },
                     },
@@ -100,6 +89,39 @@ def _drawing_since(session: Session, plug: Plug):
             break
         since = r.recorded_at
     return since, (readings[0] if readings else None)
+
+
+def _local_iso(moment) -> str:
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)  # SQLite hands back naive UTC
+    return moment.astimezone().isoformat()
+
+
+def switched_off_by_judy(session: Session, current) -> list[dict]:
+    """Plugs a household member turned off through a Judy action in the last day and that have not been
+    turned back on through an action since. Nothing else counts: a plug someone switched off by hand
+    is never listed, so Judy never undoes it."""
+    executed = session.exec(
+        select(Action)
+        .where(Action.status == "executed", Action.type.in_(["turn_off", "turn_on"]),
+               Action.plug_id.is_not(None), Action.executed_at >= current - RESTORE_WINDOW)
+        .order_by(Action.executed_at, Action.id)
+    ).all()
+    latest = {a.plug_id: a for a in executed}
+    result = []
+    for plug_id, action in latest.items():
+        if action.type != "turn_off":
+            continue
+        plug = session.get(Plug, plug_id)
+        if plug is None:
+            continue
+        result.append({
+            "plug_id": plug_id,
+            "name": plug.name,
+            "switched_off_at_local": _local_iso(action.executed_at),
+            "action_id": action.id,
+        })
+    return result
 
 
 def build_context(session: Session, trigger: Trigger) -> dict:
@@ -131,14 +153,20 @@ def build_context(session: Session, trigger: Trigger) -> dict:
         actions = session.exec(select(Action).where(Action.message_id == m.id)).all()
         recent_messages.append({
             "kind": m.kind, "plug_id": m.plug_id, "title": m.title,
-            "created_at": m.created_at.isoformat(),
+            "created_at_local": _local_iso(m.created_at),
             "action_statuses": [a.status for a in actions],
         })
 
+    local = current.astimezone()
     return {
         "now": current.isoformat(),
+        "local_time": local.strftime("%H:%M"),
+        "local_date": local.date().isoformat(),
+        "weekday": local.strftime("%A"),
+        "timezone": local.tzname(),
         "trigger": {"kind": trigger.kind, "detail": trigger.detail, "device_id": trigger.device_id, "data": trigger.data},
         "plugs": plugs,
+        "switched_off_by_judy": switched_off_by_judy(session, current),
         "recent_messages": recent_messages,
     }
 
@@ -148,7 +176,7 @@ def call_claude(context: dict) -> dict:
     client = anthropic.Anthropic()
     response = client.beta.messages.create(
         model=MODEL,
-        max_tokens=4096,
+        max_tokens=16000,
         betas=["server-side-fallback-2026-07-01"],
         fallbacks="default",
         system=SYSTEM_PROMPT,
@@ -161,64 +189,43 @@ def call_claude(context: dict) -> dict:
     return json.loads(text)
 
 
-def _plug_label(plug: dict | None) -> str:
-    return (plug and (plug["name"] or plug["model"])) or "A plug"
-
-
-def _dismiss(plug_id: int | None) -> dict:
-    return {"label": "Dismiss", "description": "Ignore this", "type": "dismiss", "plug_id": plug_id}
-
-
-def rule_based_decision(context: dict) -> dict:
-    """Template messages for the known triggers. No AI involved."""
-    trigger = context["trigger"]
-    messages = []
-
-    if trigger["kind"] == "power_after_off":
-        plug = next((p for p in context["plugs"] if p["device_id"] == trigger["device_id"]), None)
-        label = _plug_label(plug)
-        plug_id = plug["id"] if plug else None
-        power = trigger["data"].get("power_w", 0)
-        messages.append({
-            "plug_id": plug_id,
-            "kind": "power_after_off",
-            "severity": "critical",
-            "title": f"{label} just started drawing power",
-            "body": f"{label} was off and is now drawing {power:.0f}W.",
-            "actions": [
-                {"label": "Turn off", "description": f"Switch {label} off", "type": "turn_off", "plug_id": plug_id},
-                _dismiss(plug_id),
-            ],
-        })
-
-    elif trigger["kind"] == "time_changed":
-        already_sent = {(m["kind"], m["plug_id"]) for m in context["recent_messages"]}
-        for plug in context["plugs"]:
-            minutes = plug["drawing_power_minutes"]
-            if minutes < LEFT_ON_MINUTES or ("left_on", plug["id"]) in already_sent:
-                continue
-            label = _plug_label(plug)
-            hours = minutes / 60
-            messages.append({
-                "plug_id": plug["id"],
-                "kind": "left_on",
-                "severity": "critical",
-                "title": f"{label} has been on for {hours:.0f}h",
-                "body": f"{label} has been drawing power for about {hours:.1f} hours.",
-                "actions": [
-                    {"label": "Turn off", "description": f"Switch {label} off", "type": "turn_off", "plug_id": plug["id"]},
-                    _dismiss(plug["id"]),
-                ],
-            })
-
-    return {"reasoning": "rule-based", "messages": messages}
-
-
 def decide(context: dict) -> dict:
-    return call_claude(context) if USE_CLAUDE else rule_based_decision(context)
+    nothing = {"reasoning": "no decision", "messages": []}
+    if not USE_CLAUDE:
+        return nothing
+    try:
+        return call_claude(context)
+    except Exception as exc:
+        logger.error("claude failed, sending nothing: %r", exc)
+        return nothing
 
 
-def _save_messages(session: Session, decision: dict) -> list[Message]:
+def _plug_label(plug: Plug) -> str:
+    return plug.name or plug.model
+
+
+def _run_automatic(session: Session, action: Action, allowed_plug_ids: set[int], controller: PlugController) -> str | None:
+    """Run an action Claude marked automatic. Returns None if it ran fine, an error text if it
+    failed, and "skipped" if it isn't allowed (it then stays a normal suggestion)."""
+    if action.type != "turn_on" or action.plug_id not in allowed_plug_ids:
+        logger.warning("not running %s on plug %s automatically: only turning back on plugs Judy switched off is allowed",
+                       action.type, action.plug_id)
+        return "skipped"
+    action.status = "chosen"
+    action.chosen_at = now()
+    try:
+        action.result = controller.switch(session.get(Plug, action.plug_id), on=True)
+    except PlugControlError as exc:
+        action.status = "failed"
+        action.result = str(exc)
+        return str(exc)
+    action.status = "executed"
+    action.executed_at = now()
+    return None
+
+
+def _save_messages(session: Session, decision: dict, allowed_auto_plug_ids: set[int] = frozenset(),
+                   controller: PlugController = default_controller) -> list[Message]:
     valid_plug_ids = {p.id: p for p in session.exec(select(Plug)).all()}
     default_household = session.exec(select(Household).order_by(Household.id)).first()
     created = []
@@ -238,32 +245,60 @@ def _save_messages(session: Session, decision: dict) -> list[Message]:
         )
         session.add(message)
         session.flush()
+        automatic = []
         for a in item.get("actions", []):
             action_plug = valid_plug_ids.get(a.get("plug_id"))
-            session.add(Action(
+            action = Action(
                 message_id=message.id,
                 label=a["label"],
                 description=a["description"],
                 type=a["type"] if a["type"] in ACTION_TYPES else "dismiss",
                 plug_id=action_plug.id if action_plug else None,
-            ))
+            )
+            session.add(action)
+            if a.get("automatic"):
+                automatic.append(action)
+        session.flush()
+
+        outcomes = [(action, _run_automatic(session, action, allowed_auto_plug_ids, controller)) for action in automatic]
+        ran = [(action, error) for action, error in outcomes if error != "skipped"]
+        failed = [(action, error) for action, error in ran if error]
+        if failed:
+            # What we said no longer matches what happened: say so, and leave the action to retry.
+            action, error = failed[0]
+            label = _plug_label(session.get(Plug, action.plug_id))
+            message.severity = "critical"
+            message.title = f"Couldn't turn {label} back on"
+            message.body = f"I tried to turn {label} back on but it didn't work: {error}"
+            session.add(message)
+        session.commit()
+        if ran and not failed:
+            for other in session.exec(select(Action).where(Action.message_id == message.id)).all():
+                if other.status == "suggested":
+                    other.status = "expired"
+                    session.add(other)
+            session.commit()
+            resolve_message(session, message.id, by="judy")
         created.append(message)
-    session.commit()
     for message in created:
-        broadcaster.publish(message_payload(session, message))
+        session.refresh(message)
+        payload = message_payload(session, message)
+        logger.info("sending message:\n%s", json.dumps(payload, indent=2))
+        broadcaster.publish(payload)
     return created
 
 
-def run(session: Session, trigger: Trigger) -> list[Message]:
+def run(session: Session, trigger: Trigger, controller: PlugController | None = None) -> list[Message]:
     """Decide what to do about a trigger and save any messages. Never raises."""
-    logger.info("run: %s", trigger.detail)
+    logger.info("judy.run called: %s (%s)", trigger.kind, trigger.detail)
     try:
-        decision = decide(build_context(session, trigger))
-        created = _save_messages(session, decision)
+        context = build_context(session, trigger)
+        decision = decide(context)
+        logger.info("claude returned:\n%s", json.dumps(decision, indent=2))
+        allowed = {entry["plug_id"] for entry in context["switched_off_by_judy"]}
+        created = _save_messages(session, decision, allowed, controller or default_controller)
     except Exception as exc:
         logger.error("run failed for %s: %r", trigger.kind, exc)
         return []
     logger.info("decided: %s (%d message(s))", decision.get("reasoning", ""), len(created))
-    for m in created:
-        logger.info("message: %s - %s", m.title, m.body)
     return created
