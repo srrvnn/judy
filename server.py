@@ -1,7 +1,9 @@
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from uvicorn.logging import DefaultFormatter
 
@@ -29,6 +31,14 @@ async def lifespan(app: FastAPI):
 
 # Create the application instance named 'api'
 api = FastAPI(lifespan=lifespan)
+
+# Demo: allow any origin (e.g. a Lovable app). Set CORS_ORIGINS=a,b to restrict.
+api.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "*").split(",")],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @api.get("/v1", response_class=PlainTextResponse)
 def get_hello():
