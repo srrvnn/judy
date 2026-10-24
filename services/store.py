@@ -1,9 +1,8 @@
-from datetime import datetime, timezone
-
 from kasa import Device, Module
 from sqlmodel import Session, select
 
 from models import Household, Plug, Reading, User
+from services.clock import now
 
 
 def _energy_fields(device: Device) -> dict:
@@ -44,7 +43,7 @@ def save_plugs(session: Session, devices: list[Device]) -> int:
     they have been given a name (via the API).
     Returns the number of readings recorded.
     """
-    now = datetime.now(timezone.utc)
+    recorded_at = now()
     saved = 0
     for device in devices:
         plug = session.exec(select(Plug).where(Plug.device_id == device.device_id)).first()
@@ -56,19 +55,19 @@ def save_plugs(session: Session, devices: list[Device]) -> int:
                 model=device.model,
                 host=device.host,
                 has_energy=Module.Energy in device.modules,
-                first_seen_at=now,
-                last_seen_at=now,
+                first_seen_at=recorded_at,
+                last_seen_at=recorded_at,
             )
             session.add(plug)
             session.flush()
         else:
             plug.model = device.model
             plug.host = device.host
-            plug.last_seen_at = now
+            plug.last_seen_at = recorded_at
             session.add(plug)
 
         if plug.name:
-            session.add(Reading(plug_id=plug.id, recorded_at=now, was_on=device.is_on, **_energy_fields(device)))
+            session.add(Reading(plug_id=plug.id, recorded_at=recorded_at, was_on=device.is_on, **_energy_fields(device)))
             saved += 1
     session.commit()
     return saved

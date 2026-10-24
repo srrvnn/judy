@@ -1,10 +1,8 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from sqlalchemy import JSON, Index
 from sqlmodel import SQLModel, Field, Column
 
-
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+from services.clock import now as utcnow
 
 
 class Household(SQLModel, table=True):
