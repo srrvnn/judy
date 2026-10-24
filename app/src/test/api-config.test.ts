@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { apiEndpoint, normalizeApiBaseUrl } from "@/lib/api-config";
+import { apiEndpoint, eventStreamUrl, normalizeApiBaseUrl } from "@/lib/api-config";
 import { fetchApiPlugs } from "@/lib/api-client";
 import { plugsQueryFor } from "@/lib/plugs-query";
 
@@ -29,5 +29,11 @@ describe("Configurable API connection", () => {
   it("does not treat a non-plug response as connected", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('{"ok":true}', { status: 200 })));
     await expect(fetchApiPlugs("https://replacement.lhr.life")).rejects.toThrow("valid plug list");
+  });
+  it("never asks the server to replay history on a fresh page load", () => {
+    expect(eventStreamUrl("https://replacement.lhr.life", null)).toBe("https://replacement.lhr.life/v1/events");
+  });
+  it("asks only for messages after the last one seen when reconnecting", () => {
+    expect(eventStreamUrl("https://replacement.lhr.life", "7")).toBe("https://replacement.lhr.life/v1/events?after=7");
   });
 });

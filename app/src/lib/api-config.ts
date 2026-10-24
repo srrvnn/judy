@@ -18,3 +18,13 @@ export function normalizeApiBaseUrl(value: string): string {
 export function apiEndpoint(baseUrl: string, path: string): string {
   return `${normalizeApiBaseUrl(baseUrl)}/v1/${path}`;
 }
+/**
+ * The live stream address. `lastId` is the id of the last message this page has seen, or null when
+ * it has seen none. Only a reconnect passes an id: a fresh page load must never ask the server to
+ * replay history, or old unresolved alerts come back as if they were new.
+ */
+export function eventStreamUrl(baseUrl: string, lastId: string | null): string {
+  const url = new URL(apiEndpoint(baseUrl, "events"));
+  if (lastId !== null) url.searchParams.set("after", lastId);
+  return url.toString();
+}

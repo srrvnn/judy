@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { applyAcknowledgement, dismissPlugAlerts, isAcknowledged, isNotificationFromThisVisit, isSevere, mergeAcknowledgement, mergeNotification, parseNotification, type Notification } from "@/lib/events";
-import { apiEndpoint } from "@/lib/api-config";
+import { eventStreamUrl } from "@/lib/api-config";
 import { useApiConfig } from "@/components/api-config-provider";
 
 type NotificationsState = { items: Notification[]; acknowledged: Notification[]; connection: "connecting" | "live" | "reconnecting"; unread: number; markRead: () => void; clearAll: () => void; dismissAlerts: (plugId: number) => void; updateNotification: (item: Notification) => void };
@@ -23,7 +23,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     setConnection("connecting");
     let source: EventSource | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined;
-    let lastId = "0";
+    let lastId: string | null = null; // nothing seen yet: a fresh load asks for new messages only, never history
     let disposed = false;
     const receive = (event: MessageEvent<string>) => {
       const notification = parseNotification(event.data);
@@ -39,9 +39,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     };
     const connect = () => {
       if (disposed) return;
-      const url = new URL(apiEndpoint(baseUrl, "events"));
-      url.searchParams.set("after", lastId);
-      const current = new EventSource(url.toString());
+      const current = new EventSource(eventStreamUrl(baseUrl, lastId));
       source = current;
       current.onopen = () => setConnection("live");
       current.onerror = () => {
