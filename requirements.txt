@@ -6,3 +6,4 @@ httpx
 python-kasa
 sqlmodel
 alembic
+anthropic

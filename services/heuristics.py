@@ -1,21 +1,13 @@
 import logging
 import os
-from dataclasses import dataclass
 
 from kasa import Device, Module
+
+from judy.trigger import Trigger
 
 logger = logging.getLogger("judy.heuristics")
 
 POWER_THRESHOLD_W = float(os.environ.get("POWER_THRESHOLD_W", "1.0"))
-
-
-@dataclass
-class Trigger:
-    kind: str
-    device_id: str
-    host: str
-    label: str
-    power_w: float
 
 
 def current_power_w(device: Device) -> float | None:
@@ -50,13 +42,13 @@ class PowerAfterOffDetector:
             previous = self._was_drawing.get(device.device_id)
             self._was_drawing[device.device_id] = drawing
             if drawing and previous is False:
+                label = device.alias or device.model
                 triggers.append(
                     Trigger(
                         kind="power_after_off",
+                        detail=f"{label} ({device.host}) is drawing {power:.1f}W after being off",
                         device_id=device.device_id,
-                        host=device.host,
-                        label=device.alias or device.model,
-                        power_w=power,
+                        data={"power_w": power, "host": device.host},
                     )
                 )
         return triggers
@@ -64,4 +56,4 @@ class PowerAfterOffDetector:
 
 def log_triggers(triggers: list[Trigger]) -> None:
     for t in triggers:
-        logger.warning("%s (%s) is drawing %.1fW after being off", t.label, t.host, t.power_w)
+        logger.warning("%s", t.detail)

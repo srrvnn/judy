@@ -22,7 +22,7 @@ def test_fires_when_power_appears_after_off():
     detector.check([fake_device(0.0, is_on=False)])
     triggers = detector.check([fake_device(50.0)])
     assert [t.kind for t in triggers] == ["power_after_off"]
-    assert triggers[0].power_w == 50.0
+    assert triggers[0].data["power_w"] == 50.0
 
 
 def test_fires_once_per_transition():

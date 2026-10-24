@@ -25,3 +25,35 @@ def client_fixture(session: Session):
     api.dependency_overrides[get_session] = lambda: session
     yield TestClient(api)
     api.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def stub_claude(monkeypatch):
+    """Never call the real Claude API from tests. Contexts passed to call_claude land in `calls`."""
+    calls = []
+    decision = {"reasoning": "stub", "messages": []}
+
+    def fake_call_claude(context):
+        calls.append(context)
+        return decision
+
+    monkeypatch.setattr("judy.run.call_claude", fake_call_claude)
+    fake_call_claude.calls = calls
+    fake_call_claude.decision = decision
+    return fake_call_claude
+
+
+@pytest.fixture(autouse=True)
+def reset_clock():
+    from services.clock import clock
+    clock.reset()
+    yield
+    clock.reset()
+
+
+@pytest.fixture(autouse=True)
+def clean_broadcaster():
+    from services.events import broadcaster
+    broadcaster._subscribers.clear()
+    yield
+    broadcaster._subscribers.clear()
