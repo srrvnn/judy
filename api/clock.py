@@ -12,10 +12,24 @@ from services.clock import clock
 router = APIRouter()
 
 
+def next_local_time(current: datetime, hhmm: str) -> datetime:
+    """The next time the server's local clock reads hh:mm, strictly after `current`."""
+    hour, minute = map(int, hhmm.split(":"))
+    local = current.astimezone()
+    target = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= local:
+        target += timedelta(days=1)
+    return target
+
+
 def _state(messages_created: int = 0) -> ClockRead:
+    current, real = clock.now(), datetime.now(timezone.utc)
     return ClockRead(
-        now=clock.now(),
-        real_now=datetime.now(timezone.utc),
+        now=current,
+        real_now=real,
+        now_local=current.astimezone().isoformat(),
+        real_now_local=real.astimezone().isoformat(),
+        timezone=current.astimezone().tzname(),
         offset_seconds=clock.offset.total_seconds(),
         simulated=clock.offset != timedelta(0),
         messages_created=messages_created,
@@ -42,6 +56,8 @@ def update_clock(body: ClockUpdate, session: Session = Depends(get_session)):
     before = clock.now()
     if body.now is not None:
         clock.set(body.now)
+    elif body.next_at is not None:
+        clock.set(next_local_time(clock.now(), body.next_at))
     else:
         clock.advance(timedelta(minutes=body.advance_minutes))
     return _time_changed(session, before)

@@ -23,6 +23,9 @@ class PlugUpdate(BaseModel):
 class ClockRead(BaseModel):
     now: datetime
     real_now: datetime
+    now_local: str  # the clock's time as the server's local wall clock, ISO with offset
+    real_now_local: str  # the real time, same format
+    timezone: str
     offset_seconds: float
     simulated: bool
     messages_created: int = 0
@@ -31,11 +34,17 @@ class ClockRead(BaseModel):
 class ClockUpdate(BaseModel):
     now: datetime | None = None
     advance_minutes: int | None = None
+    next_at: str | None = None  # "HH:MM" server-local time: move to its next occurrence in the future
 
     @model_validator(mode="after")
     def exactly_one(self):
-        if (self.now is None) == (self.advance_minutes is None):
-            raise ValueError("provide exactly one of 'now' or 'advance_minutes'")
+        if sum(v is not None for v in (self.now, self.advance_minutes, self.next_at)) != 1:
+            raise ValueError("provide exactly one of 'now', 'advance_minutes' or 'next_at'")
+        if self.next_at is not None:
+            try:
+                datetime.strptime(self.next_at, "%H:%M")
+            except ValueError:
+                raise ValueError("'next_at' must look like 16:00")
         return self
 
 
@@ -46,6 +55,7 @@ class ActionRead(BaseModel):
     type: str
     plug_id: int | None
     status: str
+    result: str | None = None
 
 
 class MessageRead(BaseModel):

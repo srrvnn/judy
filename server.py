@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from uvicorn.logging import DefaultFormatter
 
+from api.actions import router as actions_router
 from api.clock import router as clock_router
 from api.events import router as events_router
 from api.messages import router as messages_router
@@ -48,4 +49,5 @@ api.include_router(plugs_router, prefix="/v1")
 api.include_router(clock_router, prefix="/v1")
 api.include_router(messages_router, prefix="/v1")
 api.include_router(events_router, prefix="/v1")
+api.include_router(actions_router, prefix="/v1")
 api.include_router(panel_router)

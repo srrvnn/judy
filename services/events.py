@@ -16,9 +16,9 @@ from services.clock import now
 
 HEARTBEAT_SECONDS = 15
 RETRY_MS = 3000
-# Demo: send a mock message to every client that connects, so a UI can be built
-# without waiting on a real trigger. Set SSE_MOCK_ON_CONNECT=0 to turn it off.
-MOCK_ON_CONNECT = os.environ.get("SSE_MOCK_ON_CONNECT", "1") != "0"
+# Off by default. Set SSE_MOCK_ON_CONNECT=1 to send a mock message to every client that
+# connects, so a UI can be built without waiting on a real trigger.
+MOCK_ON_CONNECT = os.environ.get("SSE_MOCK_ON_CONNECT", "0") == "1"
 
 
 def mock_message() -> dict:

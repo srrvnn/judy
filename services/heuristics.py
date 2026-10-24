@@ -56,4 +56,5 @@ class PowerAfterOffDetector:
 
 def log_triggers(triggers: list[Trigger]) -> None:
     for t in triggers:
-        logger.warning("%s", t.detail)
+        logger.log(logging.WARNING if t.kind == "power_after_off" else logging.INFO, "%s", t.detail)
+

@@ -21,14 +21,12 @@ def test_resolve_marks_message_info_and_records_who(session):
     assert resolved.resolved_at is not None
 
 
-def test_resolve_publishes_message_updated(session, monkeypatch):
+def test_resolve_sends_nothing_over_the_stream(session, monkeypatch):
     message = make_message(session)
     published = []
-    monkeypatch.setattr("services.messages.broadcaster.publish", lambda payload, event="message": published.append((event, payload)))
+    monkeypatch.setattr("services.events.broadcaster.publish", lambda payload, event="message": published.append(event))
     resolve_message(session, message.id, by="user")
-    assert [e for e, _ in published] == ["message_updated"]
-    payload = published[0][1]
-    assert payload["severity"] == "info" and payload["resolved_by"] == "user"
+    assert published == []
 
 
 def test_resolving_twice_or_unknown_does_nothing(session):
@@ -44,3 +42,4 @@ def test_messages_api_reports_resolution(client, session):
     resolve_message(session, message.id, by="judy")
     body = client.get("/v1/messages").json()[0]
     assert body["severity"] == "info" and body["resolved_by"] == "judy" and body["resolved_at"]
+

@@ -2,11 +2,10 @@ from sqlmodel import Session
 
 from models import Message
 from services.clock import now
-from services.events import broadcaster, message_payload
 
 
 def resolve_message(session: Session, message_id: int, by: str) -> Message | None:
-    """Mark a message as taken care of (severity becomes info) and tell connected clients.
+    """Mark a message as taken care of (severity becomes info). Nothing is sent over the stream.
 
     `by` is "user" or "judy". Returns None if the message doesn't exist or was already resolved.
     """
@@ -19,5 +18,4 @@ def resolve_message(session: Session, message_id: int, by: str) -> Message | Non
     session.add(message)
     session.commit()
     session.refresh(message)
-    broadcaster.publish(message_payload(session, message), event="message_updated")
     return message

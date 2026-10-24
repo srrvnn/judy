@@ -176,10 +176,10 @@ def test_endpoint_passes_mock_unless_disabled(client, monkeypatch):
         yield ""
 
     monkeypatch.setattr("api.events.event_stream", capture)
+    client.get("/v1/events")  # off by default
+    monkeypatch.setattr("api.events.MOCK_ON_CONNECT", True)
     client.get("/v1/events")
-    monkeypatch.setattr("api.events.MOCK_ON_CONNECT", False)
-    client.get("/v1/events")
-    assert seen[0]["mock"] is True and seen[1] is None
+    assert seen[0] is None and seen[1]["mock"] is True
 
 
 def test_update_events_are_streamed_without_an_id():

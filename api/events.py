@@ -18,7 +18,7 @@ async def events(
     """Stream new messages as server-sent events.
 
     A reconnecting browser sends Last-Event-ID automatically; anything newer is replayed first.
-    Every connection also gets one mock message first (unless SSE_MOCK_ON_CONNECT=0).
+    With SSE_MOCK_ON_CONNECT=1, every connection also gets one mock message first.
     """
     queue = broadcaster.subscribe()  # subscribe before replaying so nothing slips between the two
     since = last_event_id if last_event_id is not None else after

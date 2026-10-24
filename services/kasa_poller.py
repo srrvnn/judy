@@ -6,8 +6,6 @@ from kasa import Device, DeviceType, Discover, Module
 from sqlmodel import Session
 
 from db.session import engine
-from judy.run import run as judy_run
-from judy.trigger import Trigger
 from services.heuristics import PowerAfterOffDetector, log_triggers
 from services.store import save_plugs
 
@@ -48,21 +46,6 @@ def describe_energy(device: Device) -> str:
     return " | " + ", ".join(parts)
 
 
-_background: set[asyncio.Task] = set()
-
-
-def _run_judy(trigger: Trigger) -> None:
-    with Session(engine) as session:
-        judy_run(session, trigger)
-
-
-def _dispatch(trigger: Trigger) -> None:
-    """Run judy.run for a trigger without holding up the next poll."""
-    task = asyncio.create_task(asyncio.to_thread(_run_judy, trigger))
-    _background.add(task)
-    task.add_done_callback(_background.discard)
-
-
 def _save(plugs: list[Device]) -> None:
     with Session(engine) as session:
         save_plugs(session, plugs)
@@ -77,10 +60,7 @@ async def poll_forever(interval: float = POLL_INTERVAL_SECONDS) -> None:
             for p in plugs:
                 state = "on" if p.is_on else "off"
                 logger.info("%s (%s) @ %s - %s%s", p.alias or "no name", p.model, p.host, state, describe_energy(p))
-            triggers = power_after_off.check(plugs)
-            log_triggers(triggers)
-            for trigger in triggers:
-                _dispatch(trigger)
+            log_triggers(power_after_off.check(plugs))  # detected and logged only; no message is sent
         except asyncio.CancelledError:
             raise
         except Exception as exc:
