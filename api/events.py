@@ -4,7 +4,7 @@ from sqlmodel import Session, select
 
 from db.session import get_session
 from models import Message
-from services.events import broadcaster, event_stream, message_payload
+from services.events import MOCK_ON_CONNECT, broadcaster, event_stream, message_payload, mock_message
 
 router = APIRouter()
 
@@ -18,6 +18,7 @@ async def events(
     """Stream new messages as server-sent events.
 
     A reconnecting browser sends Last-Event-ID automatically; anything newer is replayed first.
+    Every connection also gets one mock message first (unless SSE_MOCK_ON_CONNECT=0).
     """
     queue = broadcaster.subscribe()  # subscribe before replaying so nothing slips between the two
     since = last_event_id if last_event_id is not None else after
@@ -26,7 +27,7 @@ async def events(
         messages = session.exec(select(Message).where(Message.id > since).order_by(Message.id)).all()
         replay = [message_payload(session, m) for m in messages]
     return StreamingResponse(
-        event_stream(queue, replay),
+        event_stream(queue, replay, mock=mock_message() if MOCK_ON_CONNECT else None),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

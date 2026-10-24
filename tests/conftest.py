@@ -38,6 +38,7 @@ def stub_claude(monkeypatch):
         return decision
 
     monkeypatch.setattr("judy.run.call_claude", fake_call_claude)
+    monkeypatch.setattr("judy.run.USE_CLAUDE", True)  # tests of the Claude path; rule-based tests turn it off
     fake_call_claude.calls = calls
     fake_call_claude.decision = decision
     return fake_call_claude

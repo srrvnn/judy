@@ -5,15 +5,40 @@ loop, so publish() hands payloads across threads safely. State is per process.
 """
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterator
 
 from sqlmodel import Session, select
 
 from models import Action, Message
 from schemas import MessageRead
+from services.clock import now
 
 HEARTBEAT_SECONDS = 15
 RETRY_MS = 3000
+# Demo: send a mock message to every client that connects, so a UI can be built
+# without waiting on a real trigger. Set SSE_MOCK_ON_CONNECT=0 to turn it off.
+MOCK_ON_CONNECT = os.environ.get("SSE_MOCK_ON_CONNECT", "1") != "0"
+
+
+def mock_message() -> dict:
+    """A fake message in the same shape as a real one. Never saved to the database."""
+    return {
+        "id": 0,
+        "household_id": 0,
+        "plug_id": None,
+        "kind": "mock",
+        "title": "Mock: heater left on",
+        "body": "This is a mock message sent when you connected. The heater has been on for 4 hours.",
+        "created_at": now().isoformat(),
+        "actions": [
+            {"id": 0, "label": "Turn off", "description": "Switch the heater off", "type": "turn_off",
+             "plug_id": None, "status": "suggested"},
+            {"id": 0, "label": "Dismiss", "description": "Ignore this", "type": "dismiss",
+             "plug_id": None, "status": "suggested"},
+        ],
+        "mock": True,
+    }
 
 
 def message_payload(session: Session, message: Message) -> dict:
@@ -60,8 +85,11 @@ class Broadcaster:
 broadcaster = Broadcaster()
 
 
-def format_event(payload: dict) -> str:
-    return f"id: {payload['id']}\nevent: message\ndata: {json.dumps(payload)}\n\n"
+def format_event(payload: dict, with_id: bool = True) -> str:
+    # No id line for mock messages: an id would become the browser's Last-Event-ID
+    # and trigger a bogus replay on reconnect.
+    id_line = f"id: {payload['id']}\n" if with_id else ""
+    return f"{id_line}event: message\ndata: {json.dumps(payload)}\n\n"
 
 
 async def event_stream(
@@ -69,11 +97,14 @@ async def event_stream(
     replay: list[dict],
     heartbeat: float = HEARTBEAT_SECONDS,
     bus: Broadcaster = broadcaster,
+    mock: dict | None = None,
 ) -> AsyncIterator[str]:
-    """Yield SSE text: a retry hint, replayed messages, then live messages with keep-alives."""
+    """Yield SSE text: a retry hint, an optional mock message, replayed messages, then live ones with keep-alives."""
     last_id = 0
     try:
         yield f"retry: {RETRY_MS}\n\n"
+        if mock is not None:
+            yield format_event(mock, with_id=False)
         for payload in replay:
             last_id = max(last_id, payload["id"])
             yield format_event(payload)

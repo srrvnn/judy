@@ -1,11 +1,13 @@
-"""judy.run: decide, with Claude, what to do about a trigger.
+"""judy.run: decide what to do about a trigger.
 
 Heuristics (e.g. power drawn after being off) and the control panel's clock
-changes both end up here. We hand Claude the trigger plus the household's
-current picture and it decides whether to send messages with suggested actions.
+changes both end up here. For now decisions are rule-based; set JUDY_USE_CLAUDE=1
+to hand Claude the trigger plus the household's current picture instead and let
+it decide whether to send messages with suggested actions.
 """
 import json
 import logging
+import os
 
 import anthropic
 from sqlmodel import Session, select
@@ -18,6 +20,8 @@ from services.events import broadcaster, message_payload
 logger = logging.getLogger("judy.run")
 
 MODEL = "claude-opus-5-5"
+USE_CLAUDE = os.environ.get("JUDY_USE_CLAUDE", "0") == "1"
+LEFT_ON_MINUTES = int(os.environ.get("LEFT_ON_MINUTES", "120"))
 ACTION_TYPES = ["turn_off", "turn_on", "dismiss"]
 DRAWING_THRESHOLD_W = 1.0
 
@@ -151,6 +155,61 @@ def call_claude(context: dict) -> dict:
     return json.loads(text)
 
 
+def _plug_label(plug: dict | None) -> str:
+    return (plug and (plug["name"] or plug["model"])) or "A plug"
+
+
+def _dismiss(plug_id: int | None) -> dict:
+    return {"label": "Dismiss", "description": "Ignore this", "type": "dismiss", "plug_id": plug_id}
+
+
+def rule_based_decision(context: dict) -> dict:
+    """Template messages for the known triggers. No AI involved."""
+    trigger = context["trigger"]
+    messages = []
+
+    if trigger["kind"] == "power_after_off":
+        plug = next((p for p in context["plugs"] if p["device_id"] == trigger["device_id"]), None)
+        label = _plug_label(plug)
+        plug_id = plug["id"] if plug else None
+        power = trigger["data"].get("power_w", 0)
+        messages.append({
+            "plug_id": plug_id,
+            "kind": "power_after_off",
+            "title": f"{label} just started drawing power",
+            "body": f"{label} was off and is now drawing {power:.0f}W.",
+            "actions": [
+                {"label": "Turn off", "description": f"Switch {label} off", "type": "turn_off", "plug_id": plug_id},
+                _dismiss(plug_id),
+            ],
+        })
+
+    elif trigger["kind"] == "time_changed":
+        already_sent = {(m["kind"], m["plug_id"]) for m in context["recent_messages"]}
+        for plug in context["plugs"]:
+            minutes = plug["drawing_power_minutes"]
+            if minutes < LEFT_ON_MINUTES or ("left_on", plug["id"]) in already_sent:
+                continue
+            label = _plug_label(plug)
+            hours = minutes / 60
+            messages.append({
+                "plug_id": plug["id"],
+                "kind": "left_on",
+                    "title": f"{label} has been on for {hours:.0f}h",
+                "body": f"{label} has been drawing power for about {hours:.1f} hours.",
+                "actions": [
+                    {"label": "Turn off", "description": f"Switch {label} off", "type": "turn_off", "plug_id": plug["id"]},
+                    _dismiss(plug["id"]),
+                ],
+            })
+
+    return {"reasoning": "rule-based", "messages": messages}
+
+
+def decide(context: dict) -> dict:
+    return call_claude(context) if USE_CLAUDE else rule_based_decision(context)
+
+
 def _save_messages(session: Session, decision: dict) -> list[Message]:
     valid_plug_ids = {p.id: p for p in session.exec(select(Plug)).all()}
     default_household = session.exec(select(Household).order_by(Household.id)).first()
@@ -190,7 +249,7 @@ def run(session: Session, trigger: Trigger) -> list[Message]:
     """Decide what to do about a trigger and save any messages. Never raises."""
     logger.info("run: %s", trigger.detail)
     try:
-        decision = call_claude(build_context(session, trigger))
+        decision = decide(build_context(session, trigger))
         created = _save_messages(session, decision)
     except Exception as exc:
         logger.error("run failed for %s: %r", trigger.kind, exc)

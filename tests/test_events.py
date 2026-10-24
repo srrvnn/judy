@@ -5,7 +5,7 @@ import threading
 from judy.run import run
 from judy.trigger import Trigger
 from models import Household, Message, Plug
-from services.events import Broadcaster, event_stream, format_event
+from services.events import Broadcaster, event_stream, format_event, mock_message
 
 
 def payload(id_, title="t"):
@@ -132,3 +132,50 @@ def test_publish_survives_a_closed_event_loop():
     asyncio.run(subscribe_then_exit())  # loop is closed once this returns
     bus.publish(payload(1))  # must not raise
     assert bus.subscriber_count == 0
+
+
+def test_mock_message_is_sent_first_without_an_id():
+    async def scenario():
+        bus = Broadcaster()
+        stream = event_stream(bus.subscribe(), replay=[payload(5)], heartbeat=5, bus=bus, mock=mock_message())
+        await anext(stream)  # retry hint
+        mock_chunk = await anext(stream)
+        real_chunk = await anext(stream)
+        await stream.aclose()
+        return mock_chunk, real_chunk
+
+    mock_chunk, real_chunk = asyncio.run(scenario())
+    assert "id:" not in mock_chunk  # must not become the browser's Last-Event-ID
+    data = json.loads(mock_chunk.split("data: ", 1)[1])
+    assert data["mock"] is True and data["actions"][0]["label"] == "Turn off"
+    assert parse(real_chunk)["id"] == 5
+
+
+def test_mock_does_not_suppress_real_messages_with_low_ids():
+    async def scenario():
+        bus = Broadcaster()
+        queue = bus.subscribe()
+        stream = event_stream(queue, replay=[], heartbeat=5, bus=bus, mock=mock_message())
+        await anext(stream)
+        await anext(stream)  # mock
+        bus.publish(payload(1))
+        await asyncio.sleep(0)
+        chunk = await anext(stream)
+        await stream.aclose()
+        return chunk
+
+    assert parse(asyncio.run(scenario()))["id"] == 1
+
+
+def test_endpoint_passes_mock_unless_disabled(client, monkeypatch):
+    seen = []
+
+    async def capture(queue, replay, mock=None, **kwargs):
+        seen.append(mock)
+        yield ""
+
+    monkeypatch.setattr("api.events.event_stream", capture)
+    client.get("/v1/events")
+    monkeypatch.setattr("api.events.MOCK_ON_CONNECT", False)
+    client.get("/v1/events")
+    assert seen[0]["mock"] is True and seen[1] is None
