@@ -57,4 +57,6 @@ class MessageRead(BaseModel):
     title: str
     body: str
     created_at: datetime
+    resolved_at: datetime | None
+    resolved_by: str | None
     actions: list[ActionRead]

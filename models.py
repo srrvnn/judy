@@ -66,6 +66,8 @@ class Message(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
     read_at: datetime | None = Field(default=None)
     expires_at: datetime | None = Field(default=None)
+    resolved_at: datetime | None = Field(default=None)
+    resolved_by: str | None = Field(default=None, description="'user' or 'judy'")
 
 
 class Action(SQLModel, table=True):

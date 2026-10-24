@@ -61,7 +61,7 @@ def test_publish_from_another_thread_reaches_subscriber():
         threading.Thread(target=bus.publish, args=(payload(9),)).start()
         return await asyncio.wait_for(queue.get(), timeout=2)
 
-    assert asyncio.run(scenario())["id"] == 9
+    assert asyncio.run(scenario()) == ("message", payload(9))
 
 
 def test_publish_with_no_subscribers_is_a_noop():
@@ -180,3 +180,23 @@ def test_endpoint_passes_mock_unless_disabled(client, monkeypatch):
     monkeypatch.setattr("api.events.MOCK_ON_CONNECT", False)
     client.get("/v1/events")
     assert seen[0]["mock"] is True and seen[1] is None
+
+
+def test_update_events_are_streamed_without_an_id():
+    async def scenario():
+        bus = Broadcaster()
+        stream = event_stream(bus.subscribe(), replay=[], heartbeat=5, bus=bus)
+        await anext(stream)
+        bus.publish(payload(4, "handled"), event="message_updated")
+        await asyncio.sleep(0)
+        chunk = await anext(stream)
+        bus.publish(payload(5))  # a later new message must still arrive
+        await asyncio.sleep(0)
+        following = await anext(stream)
+        await stream.aclose()
+        return chunk, following
+
+    chunk, following = asyncio.run(scenario())
+    assert chunk.startswith("event: message_updated")
+    assert "id:" not in chunk  # must not become the browser's Last-Event-ID
+    assert parse(following)["id"] == 5

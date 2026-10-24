@@ -55,7 +55,7 @@ class Broadcaster:
         self._loop: asyncio.AbstractEventLoop | None = None
 
     def subscribe(self) -> asyncio.Queue:
-        """Call from the event loop. Returns a queue that receives every published payload."""
+        """Call from the event loop. Returns a queue that receives (event, payload) for everything published."""
         self._loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
         self._subscribers.add(queue)
@@ -64,19 +64,19 @@ class Broadcaster:
     def unsubscribe(self, queue: asyncio.Queue) -> None:
         self._subscribers.discard(queue)
 
-    def publish(self, payload: dict) -> None:
+    def publish(self, payload: dict, event: str = "message") -> None:
         """Safe to call from any thread. Does nothing when nobody is listening."""
         if self._loop is None or not self._subscribers:
             return
         try:
-            self._loop.call_soon_threadsafe(self._fan_out, payload)
+            self._loop.call_soon_threadsafe(self._fan_out, event, payload)
         except RuntimeError:
             # the loop that owned these subscribers is gone (e.g. shutdown); drop them
             self._subscribers.clear()
 
-    def _fan_out(self, payload: dict) -> None:
+    def _fan_out(self, event: str, payload: dict) -> None:
         for queue in list(self._subscribers):
-            queue.put_nowait(payload)
+            queue.put_nowait((event, payload))
 
     @property
     def subscriber_count(self) -> int:
@@ -86,11 +86,11 @@ class Broadcaster:
 broadcaster = Broadcaster()
 
 
-def format_event(payload: dict, with_id: bool = True) -> str:
-    # No id line for mock messages: an id would become the browser's Last-Event-ID
+def format_event(payload: dict, with_id: bool = True, event: str = "message") -> str:
+    # No id line for mock or update events: an id would become the browser's Last-Event-ID
     # and trigger a bogus replay on reconnect.
     id_line = f"id: {payload['id']}\n" if with_id else ""
-    return f"{id_line}event: message\ndata: {json.dumps(payload)}\n\n"
+    return f"{id_line}event: {event}\ndata: {json.dumps(payload)}\n\n"
 
 
 async def event_stream(
@@ -111,9 +111,12 @@ async def event_stream(
             yield format_event(payload)
         while True:
             try:
-                payload = await asyncio.wait_for(queue.get(), timeout=heartbeat)
+                event, payload = await asyncio.wait_for(queue.get(), timeout=heartbeat)
             except asyncio.TimeoutError:
                 yield ": keep-alive\n\n"
+                continue
+            if event != "message":
+                yield format_event(payload, with_id=False, event=event)
                 continue
             if payload["id"] <= last_id:
                 continue  # already sent during replay

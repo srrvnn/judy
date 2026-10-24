@@ -46,6 +46,9 @@ memory and resets when the server restarts.
 `id:` = message id, `data:` = the same JSON as `GET /v1/messages`). A keep-alive
 comment is sent every 15 seconds. On reconnect the browser sends `Last-Event-ID`
 and anything newer is replayed; `?after=<id>` does the same manually.
+When a message is handled, a `message_updated` event carries the updated message
+(`severity` becomes `info`, plus `resolved_at` and `resolved_by`). Update events have no
+`id`, so they are not replayed: refetch `GET /v1/messages` after a reconnect.
 
 ```bash
 curl -N http://127.0.0.1:8000/v1/events
