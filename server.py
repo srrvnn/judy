@@ -5,6 +5,8 @@ from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 from uvicorn.logging import DefaultFormatter
 
+from api.events import router as events_router
+from api.messages import router as messages_router
 from api.plugs import router as plugs_router
 from services.kasa_poller import poll_forever
 
@@ -31,3 +33,5 @@ def get_hello():
     return "Hello from Judy API!\n"
 
 api.include_router(plugs_router, prefix="/v1")
+api.include_router(messages_router, prefix="/v1")
+api.include_router(events_router, prefix="/v1")
