@@ -31,6 +31,15 @@ On startup the server polls the local network for TP-Link Kasa plugs
 (via [python-kasa](https://github.com/python-kasa/python-kasa)) every 5 seconds
 and prints what it finds. Set `KASA_POLL_INTERVAL` (seconds) to change the interval.
 
+## Control panel and judy.run
+
+Open `/panel` for a control panel with a global clock you can move forward, set
+to an exact time, or reset. Moving the clock, and any heuristic firing on a new
+reading (e.g. a plug drawing power after being off), calls `judy.run`
+(`judy/run.py`), which asks Claude whether to send the household a message with
+suggested actions. Set `ANTHROPIC_API_KEY` in `.env`. The clock offset is kept in
+memory and resets when the server restarts.
+
 ## Live messages (SSE)
 
 `GET /v1/events` streams new messages as server-sent events (`event: message`,

@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Judy Control Panel</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --text: #1b1f24; --muted: #667085;
+    --line: #e4e7ec; --accent: #2563eb; --accent-text: #fff; --warn: #b45309; --warn-bg: #fef3c7;
+    --ok: #15803d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1216; --card: #181c22; --text: #e8eaed; --muted: #98a2b3;
+      --line: #2a303a; --accent: #3b82f6; --accent-text: #fff; --warn: #fbbf24; --warn-bg: #3a2e0b;
+      --ok: #4ade80;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 20px; margin: 0 0 16px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 12px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .time { font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .badge { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; margin-left: 8px;
+    vertical-align: middle; background: var(--line); color: var(--muted); }
+  .badge.sim { background: var(--warn-bg); color: var(--warn); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--text);
+    padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: wait; }
+  input[type=datetime-local] { font: inherit; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--card); color: var(--text); }
+  .status { color: var(--muted); font-size: 13px; margin-top: 10px; min-height: 20px; }
+  .item { border-top: 1px solid var(--line); padding: 10px 0; }
+  .item:first-of-type { border-top: 0; padding-top: 0; }
+  .item .meta { color: var(--muted); font-size: 13px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip { font-size: 12px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; color: var(--muted); }
+  .empty { color: var(--muted); }
+  .on { color: var(--ok); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Judy control panel</h1>
+
+  <section>
+    <h2>Clock</h2>
+    <div><span class="time" id="now">--</span><span class="badge" id="badge">real time</span></div>
+    <div class="row" id="advance">
+      <button data-min="60">+1 hour</button>
+      <button data-min="360">+6 hours</button>
+      <button data-min="1440">+1 day</button>
+      <button data-min="10080">+1 week</button>
+    </div>
+    <div class="row">
+      <input type="datetime-local" id="target" aria-label="Set time">
+      <button class="primary" id="set">Set time</button>
+      <button id="reset">Reset to real time</button>
+    </div>
+    <div class="status" id="status"></div>
+  </section>
+
+  <section>
+    <h2>Plugs</h2>
+    <div id="plugs"><span class="empty">Loading…</span></div>
+  </section>
+
+  <section>
+    <h2>Messages from Judy</h2>
+    <div id="messages"><span class="empty">Loading…</span></div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = (iso) => new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "medium" });
+let busy = false;
+
+function el(tag, props = {}, ...children) {
+  const node = document.createElement(tag);
+  Object.assign(node, props);
+  for (const c of children) node.append(c);
+  return node;
+}
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+function renderClock(c) {
+  $("now").textContent = fmt(c.now);
+  const badge = $("badge");
+  badge.textContent = c.simulated ? "simulated" : "real time";
+  badge.className = "badge" + (c.simulated ? " sim" : "");
+}
+
+async function loadClock() { renderClock(await api("/v1/clock")); }
+
+async function loadPlugs() {
+  const plugs = await api("/v1/plugs");
+  const box = $("plugs");
+  box.replaceChildren();
+  if (!plugs.length) { box.append(el("span", { className: "empty", textContent: "No plugs discovered yet." })); return; }
+  for (const p of plugs) {
+    box.append(el("div", { className: "item" },
+      el("div", { textContent: p.name || "(unnamed)" }),
+      el("div", { className: "meta", textContent: `${p.model} · ${p.host}${p.room ? " · " + p.room : ""} · last seen ${fmt(p.last_seen_at)}` })));
+  }
+}
+
+async function loadMessages() {
+  const messages = await api("/v1/messages");
+  const box = $("messages");
+  box.replaceChildren();
+  if (!messages.length) { box.append(el("span", { className: "empty", textContent: "Nothing yet. Change the time or wait for a trigger." })); return; }
+  for (const m of messages) {
+    const actions = el("div", { className: "actions" });
+    for (const a of m.actions) actions.append(el("span", { className: "chip", title: a.description, textContent: `${a.label} · ${a.status}` }));
+    box.append(el("div", { className: "item" },
+      el("strong", { textContent: m.title }),
+      el("div", { textContent: m.body }),
+      actions,
+      el("div", { className: "meta", textContent: `${m.kind} · ${fmt(m.created_at)}` })));
+  }
+}
+
+async function refresh() {
+  if (busy) return;
+  try { await Promise.all([loadClock(), loadPlugs(), loadMessages()]); } catch (e) { $("status").textContent = String(e); }
+}
+
+async function changeTime(path, options) {
+  busy = true;
+  const buttons = document.querySelectorAll("button");
+  buttons.forEach((b) => (b.disabled = true));
+  $("status").textContent = "Time changed. Asking Judy what to do…";
+  try {
+    const c = await api(path, options);
+    renderClock(c);
+    $("status").textContent = c.messages_created
+      ? `Judy sent ${c.messages_created} message(s).`
+      : "Judy decided there was nothing to say.";
+  } catch (e) {
+    $("status").textContent = String(e);
+  } finally {
+    busy = false;
+    buttons.forEach((b) => (b.disabled = false));
+    refresh();
+  }
+}
+
+const put = (body) => ["/v1/clock", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }];
+
+$("advance").addEventListener("click", (e) => {
+  const min = e.target.dataset && e.target.dataset.min;
+  if (min) changeTime(...put({ advance_minutes: Number(min) }));
+});
+$("set").addEventListener("click", () => {
+  const v = $("target").value;
+  if (!v) { $("status").textContent = "Pick a date and time first."; return; }
+  changeTime(...put({ now: new Date(v).toISOString() }));
+});
+$("reset").addEventListener("click", () => changeTime("/v1/clock/reset", { method: "POST" }));
+
+refresh();
+setInterval(refresh, 5000);
+setInterval(() => { if (!busy) loadClock().catch(() => {}); }, 1000);
+</script>
+</body>
+</html>
