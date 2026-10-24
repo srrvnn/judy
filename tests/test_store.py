@@ -19,9 +19,9 @@ def fake_device(alias, device_id="abc", is_on=True):
 
 
 def test_unnamed_plug_is_registered_without_readings(session):
-    assert save_plugs(session, [fake_device(None)]) == 0
+    assert save_plugs(session, [fake_device("Kasa alias")]) == 0
     plug = session.exec(select(Plug)).one()
-    assert plug.alias is None
+    assert plug.name is None
     assert len(session.exec(select(Household)).all()) == 1
     assert len(session.exec(select(User)).all()) == 1
     assert session.exec(select(Reading)).all() == []
@@ -29,23 +29,37 @@ def test_unnamed_plug_is_registered_without_readings(session):
 
 def test_readings_start_once_plug_is_named(session):
     save_plugs(session, [fake_device(None)])
-    save_plugs(session, [fake_device("Heater")])
     plug = session.exec(select(Plug)).one()
-    assert plug.alias == "Heater"
+    plug.name = "Heater"
+    session.add(plug)
+    session.commit()
+    assert save_plugs(session, [fake_device(None)]) == 1
     assert len(session.exec(select(Reading)).all()) == 1
+    assert session.exec(select(Plug)).one().name == "Heater"
 
 
-def test_new_named_plug_creates_household_user_plug_reading(session):
-    assert save_plugs(session, [fake_device("Heater")]) == 1
+def name_all_plugs(session, name="Heater"):
+    for plug in session.exec(select(Plug)).all():
+        plug.name = name
+        session.add(plug)
+    session.commit()
+
+
+def test_new_plug_creates_household_user_plug(session):
+    assert save_plugs(session, [fake_device("Heater")]) == 0
     plug = session.exec(select(Plug)).one()
-    assert plug.alias == "Heater" and plug.has_energy
+    assert plug.name is None and plug.has_energy
     assert len(session.exec(select(Household)).all()) == 1
     assert len(session.exec(select(User)).all()) == 1
+    name_all_plugs(session)
+    save_plugs(session, [fake_device("Heater")])
     reading = session.exec(select(Reading)).one()
     assert reading.power_w == 40.0 and reading.was_on is True
 
 
 def test_known_plug_adds_reading_without_new_household(session):
+    save_plugs(session, [fake_device("Heater")])
+    name_all_plugs(session)
     save_plugs(session, [fake_device("Heater")])
     save_plugs(session, [fake_device("Heater", is_on=False)])
     assert len(session.exec(select(Plug)).all()) == 1

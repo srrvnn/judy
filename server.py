@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 
+from api.plugs import router as plugs_router
 from services.kasa_poller import poll_forever
 
 # --- LIFESPAN AND APP SETUP ---
@@ -21,3 +22,5 @@ api = FastAPI(lifespan=lifespan)
 @api.get("/v1", response_class=PlainTextResponse)
 def get_hello():
     return "Hello from Judy API!\n"
+
+api.include_router(plugs_router, prefix="/v1")

@@ -40,8 +40,8 @@ def save_plugs(session: Session, devices: list[Device]) -> int:
     """Register every plug we see and record a reading for each named one.
 
     Plugs we haven't seen before join the shared default household and user,
-    which are created the first time they're needed. Unnamed plugs get a plug
-    row but no readings until they have a name.
+    which are created the first time they're needed. Plugs get readings only once
+    they have been given a name (via the API).
     Returns the number of readings recorded.
     """
     now = datetime.now(timezone.utc)
@@ -53,7 +53,6 @@ def save_plugs(session: Session, devices: list[Device]) -> int:
             plug = Plug(
                 household_id=household.id,
                 device_id=device.device_id,
-                alias=device.alias,
                 model=device.model,
                 host=device.host,
                 has_energy=Module.Energy in device.modules,
@@ -63,13 +62,12 @@ def save_plugs(session: Session, devices: list[Device]) -> int:
             session.add(plug)
             session.flush()
         else:
-            plug.alias = device.alias
             plug.model = device.model
             plug.host = device.host
             plug.last_seen_at = now
             session.add(plug)
 
-        if device.alias:
+        if plug.name:
             session.add(Reading(plug_id=plug.id, recorded_at=now, was_on=device.is_on, **_energy_fields(device)))
             saved += 1
     session.commit()

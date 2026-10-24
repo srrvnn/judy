@@ -31,7 +31,7 @@ class Plug(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     household_id: int = Field(foreign_key="households.id", index=True)
     device_id: str = Field(unique=True, index=True, description="Kasa hardware ID")
-    alias: str | None = Field(default=None, description="Name set on the plug; readings are only recorded once set")
+    name: str | None = Field(default=None, description="Name given in Judy; readings are only recorded once set")
     model: str
     host: str = Field(description="Last seen IP address")
     room: str | None = Field(default=None)
